@@ -2,13 +2,15 @@
 // (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
 // moves between four screens: title, play, paused and game over.
 //
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
+// ?seed=N fixes the valley and the ring course. ?shot=start|play|ring|end (with &seed=N)
+// stages that scene instead of running the loop, paints it twice and sets
+// window.__shotReady for a screenshot.
 import { BEST_KEY, LIVES, STEP } from './config.js';
 import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
+import { createWorld, EVENT_HIT, EVENT_OVER, EVENT_RING } from './world.js';
 import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
@@ -23,6 +25,7 @@ const canvas = document.getElementById('game');
 const status = document.getElementById('status');
 const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
+const audio = createAudio();
 
 function readBest() {
   try {
@@ -65,10 +68,11 @@ function runGame() {
   }
 
   function startGame() {
+    audio.start();
     world.reset();
     accumulator = 0;
     screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
+    announce(`Flying. ${LIVES} lives. Thread the rings.`);
   }
 
   function endGame() {
@@ -77,7 +81,7 @@ function runGame() {
       best = world.state.score;
       saveBest(best);
     }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
+    announce(`Flight over. Score ${world.state.score}. Best ${best}.`);
   }
 
   function handleActions() {
@@ -88,18 +92,30 @@ function runGame() {
       announce('Paused.');
     } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
       screen = SCREEN_PLAY;
-      announce('Playing.');
+      announce('Flying.');
     }
   }
 
   function step() {
     if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
+      world.step(STEP, { roll: 0, pitch: 0, throttle: 0 }, true);
       return;
     }
-    const events = world.step(STEP, input.direction(), false);
+    const steering = input.steering();
+    const events = world.step(
+      STEP,
+      { roll: steering.roll, pitch: steering.pitch, throttle: input.throttle() },
+      false,
+    );
+    audio.engine(world.state.plane.throttle, !world.state.plane.onGround);
+    if (events & EVENT_RING) {
+      audio.ring();
+      announce(`Ring! Score ${world.state.score}.`);
+    } else if (events & EVENT_HIT) {
+      audio.crash();
+      announce(world.state.lives === 1 ? 'Crashed. 1 life left.' : `Crashed. ${world.state.lives} lives left.`);
+    }
     if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
   }
 
   function frame(now) {
@@ -118,7 +134,7 @@ function runGame() {
     renderer.draw(world.state, screen, best);
   }
 
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
+  // Leaving the tab pauses a running game rather than letting the plane fly unseen.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
@@ -126,7 +142,7 @@ function runGame() {
     }
   });
 
-  announce('Block Dodger. Press Space or click to start.');
+  announce('Ridge Runner. Press Space or click to take off.');
   requestAnimationFrame(frame);
 }
 
